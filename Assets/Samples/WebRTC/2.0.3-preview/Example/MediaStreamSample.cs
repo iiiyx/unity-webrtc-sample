@@ -10,12 +10,12 @@ using UnityEngine.UI;
 public class MediaStreamSample : MonoBehaviour
 {
 #pragma warning disable 0649
-  [SerializeField] private InputField roomNameText;
   [SerializeField] private Button callButton;
   [SerializeField] private Button addTracksButton;
   [SerializeField] private Button removeTracksButton;
   [SerializeField] private Camera cam;
   [SerializeField] private InputField infoText;
+  [SerializeField] private InputField roomNameText;
   [SerializeField] private RawImage RtImage;
 #pragma warning restore 0649
 
@@ -66,7 +66,7 @@ public class MediaStreamSample : MonoBehaviour
     callButton.interactable = true;
 
     // pc2Ontrack = e => { OnTrack(_pc2, e); };
-    onNegotiationNeeded = () => { StartCoroutine(PcOnNegotiationNeeded()); };
+    // onNegotiationNeeded = () => { StartCoroutine(PcOnNegotiationNeeded()); };
     infoText.text = !WebRTC.SupportHardwareEncoder ? "Current GPU doesn't support encoder" : "Current GPU supports encoder";
   }
 
@@ -113,15 +113,50 @@ public class MediaStreamSample : MonoBehaviour
         throw new ArgumentOutOfRangeException(nameof(state), state, null);
     }
   }
-  IEnumerator PcOnNegotiationNeeded()
+  IEnumerator CreateOffer()
   {
-    Debug.Log("pc1 createOffer start");
+    Debug.Log("createOffer start");
     var op = peerConnection.CreateOffer(ref _offerOptions);
     yield return op;
 
     if (!op.IsError)
     {
       yield return StartCoroutine(OnCreateOfferSuccess(op.Desc));
+    }
+    else
+    {
+      OnCreateSessionDescriptionError(op.Error);
+    }
+  }
+
+  IEnumerator HandleOffer(string sdp)
+  {
+    Debug.Log("HandleOffer start");
+    Debug.Log("setRemoteDescription start");
+    var desc = new RTCSessionDescription { sdp = sdp, type = RTCSdpType.Offer };
+    var op = peerConnection.SetRemoteDescription(ref desc);
+    yield return op;
+
+    if (!op.IsError)
+    {
+      yield return StartCoroutine(CreateAnswer());
+    }
+    else
+    {
+      var error = op.Error;
+      OnSetSessionDescriptionError(ref error);
+    }
+  }
+
+  IEnumerator CreateAnswer()
+  {
+    Debug.Log("CreateAnswer start");
+    var op = peerConnection.CreateAnswer(ref _answerOptions);
+    yield return op;
+
+    if (!op.IsError)
+    {
+      yield return StartCoroutine(OnCreateAnswerSuccess(op.Desc));
     }
     else
     {
@@ -144,8 +179,6 @@ public class MediaStreamSample : MonoBehaviour
       StartCoroutine(WebRTC.Update());
       videoUpdateStarted = true;
     }
-    addTracksButton.interactable = false;
-    removeTracksButton.interactable = true;
   }
 
   private void RemoveTracks()
@@ -154,27 +187,54 @@ public class MediaStreamSample : MonoBehaviour
     {
       peerConnection.RemoveTrack(sender);
     }
-    foreach (var sender in pc2Senders)
-    {
-      _pc2.RemoveTrack(sender);
-    }
+
     pc1Senders.Clear();
-    pc2Senders.Clear();
     addTracksButton.interactable = true;
     removeTracksButton.interactable = false;
     trackInfos.Clear();
     infoText.text = "";
   }
 
-  private class JsonMessage
+  public class JsonMessage
   {
     public string command;
-    public JsonMessageDataWithRoom data;
+    public JsonMessageData data;
+    public string ToJson()
+    {
+      StringBuilder sb = new StringBuilder($"{{\"command\":\"{command}\",\"data\":{{");
+      if (data.room != null)
+      {
+        sb.Append($"\"room\":\"{data.room}\",");
+      }
+      if (data.sdp != null)
+      {
+        sb.Append($"\"sdp\":\"{data.sdp}\",");
+      }
+      if (data.label != null)
+      {
+        sb.Append($"\"label\":{data.label},");
+      }
+      if (data.id != null)
+      {
+        sb.Append($"\"id\":\"{data.id}\",");
+      }
+      if (data.candidate != null)
+      {
+        sb.Append($"\"candidate\":\"{data.candidate}\",");
+      }
+      sb.Remove(sb.Length - 1, 1);
+      sb.Append("}}");
+      return sb.ToString();
+    }
   }
 
-  private class JsonMessageDataWithRoom
+  public class JsonMessageData
   {
     public string room;
+    public string sdp;
+    public int? label = null;
+    public string id;
+    public string candidate;
   }
 
   private void HandleMessage(string message)
@@ -194,6 +254,15 @@ public class MediaStreamSample : MonoBehaviour
       case "ready":
         HandleReady(jsonMsg.data.room);
         break;
+      case "offer":
+        HandleOffer(jsonMsg.data.room, jsonMsg.data.sdp);
+        break;
+      case "answer":
+        HandleAnswer(jsonMsg.data.room, jsonMsg.data.sdp);
+        break;
+      case "candidate":
+        HandleCandidate(jsonMsg.data.room, jsonMsg.data);
+        break;
     }
   }
 
@@ -205,8 +274,13 @@ public class MediaStreamSample : MonoBehaviour
       Debug.LogError("Wrong room name " + room);
       return;
     }
-    
+
     isCaller = true;
+    PrepareMedia();
+  }
+
+  private void PrepareMedia()
+  {
     audioStream = Audio.CaptureStream();
     videoStream = cam.CaptureStream(1280, 720, 1000000);
     RtImage.texture = cam.targetTexture;
@@ -222,10 +296,8 @@ public class MediaStreamSample : MonoBehaviour
     }
 
     isCaller = false;
-    audioStream = Audio.CaptureStream();
-    videoStream = cam.CaptureStream(1280, 720, 1000000);
-    RtImage.texture = cam.targetTexture;
-    SendWsMessage("ready", new { room = roomName });
+    PrepareMedia();
+    SendWsMessage("ready", new JsonMessageData{ room = roomName });
   }
 
   private void HandleFull(string room)
@@ -257,67 +329,143 @@ public class MediaStreamSample : MonoBehaviour
     Debug.Log("GetSelectedSdpSemantics");
     var configuration = GetSelectedSdpSemantics();
     peerConnection = new RTCPeerConnection(ref configuration);
-    Debug.Log("Created local peer connection object pc1");
+    Debug.Log("Created local peer connection");
     peerConnection.OnIceCandidate = OnIceCandidate;
     peerConnection.OnIceConnectionChange = OnIceConnectionChange;
     // peerConnection.OnNegotiationNeeded = onNegotiationNeeded;
     AddTracks();
-    peerConnection.CreateOffer(ref _offerOptions);
+    StartCoroutine(CreateOffer());
   }
 
-  private void SendWsMessage(string cmd, object data)
+  private void HandleOffer(string room, string sdp)
   {
-    var msg = new { command = cmd, data };
-    ws.Send(JsonUtility.ToJson(msg));
+    Debug.Log("HandleOffer");
+    if (room != roomName)
+    {
+      Debug.LogError("Wrong room name " + room);
+      return;
+    }
+    if (isCaller)
+    {
+      Debug.LogWarning("Is caller, can't handle 'offer'");
+      return;
+    }
+
+    Debug.Log($"Received offer: {sdp}");
+
+    Debug.Log("GetSelectedSdpSemantics");
+    var configuration = GetSelectedSdpSemantics();
+    peerConnection = new RTCPeerConnection(ref configuration);
+    Debug.Log("Created local peer connection");
+    peerConnection.OnIceCandidate = OnIceCandidate;
+    peerConnection.OnIceConnectionChange = OnIceConnectionChange;
+    // peerConnection.OnNegotiationNeeded = onNegotiationNeeded;
+    AddTracks();
+    StartCoroutine(HandleOffer(sdp));
+  }
+
+  private void HandleAnswer(string room, string sdp)
+  {
+    Debug.Log("HandleAnswer");
+    if (room != roomName)
+    {
+      Debug.LogError("Wrong room name " + room);
+      return;
+    }
+    if (!isCaller)
+    {
+      Debug.LogWarning("Not a caller, can't handle 'answer'");
+      return;
+    }
+    RTCSessionDescription desc = new RTCSessionDescription { type = RTCSdpType.Answer, sdp = sdp };
+    StartCoroutine(HandleAnswer(desc));
+  }
+
+  private void HandleCandidate(string room, JsonMessageData data)
+  {
+    Debug.Log("HandleCandidate");
+    if (room != roomName)
+    {
+      Debug.LogError("Wrong room name " + room);
+      return;
+    }
+    if (data.candidate == null || data.candidate.Length == 0)
+    {
+      Debug.LogError("Empty candidate");
+      return;
+    }
+
+    var candidate = new RTCIceCandidate
+    {
+      candidate = data.candidate,
+      sdpMid = data.id,
+      sdpMLineIndex = (int)data.label
+    };
+
+    peerConnection.AddIceCandidate(ref candidate);
+  }
+
+  IEnumerator HandleAnswer(RTCSessionDescription desc)
+  {
+    Debug.Log($"HandleAnswer\n{desc.sdp}");
+    Debug.Log("setRemoteDescription start");
+    var op = peerConnection.SetRemoteDescription(ref desc);
+    yield return op;
+
+    if (!op.IsError)
+    {
+      Debug.Log("SetRemoteDescription complete");
+    }
+    else
+    {
+      var error = op.Error;
+      OnSetSessionDescriptionError(ref error);
+    }
+  }
+
+  private void SendWsMessage(string cmd, JsonMessageData data)
+  {
+    var msg = new JsonMessage{ command = cmd, data = data };
+    ws.Send(msg.ToJson());
   }
 
   private void Call()
   {
-    if (roomNameText.text.Length == 0)
+    roomName = roomNameText.text;
+    Debug.Log($"Calling room {roomName}");
+    if (roomName.Length == 0)
     {
       infoText.text = "Please enter a room name";
       return;
     }
     callButton.interactable = false;
-    roomName = roomNameText.text;
-    ws = new WebsocketClient(HandleMessage);
+    void onOpen()
+    {
+      Debug.Log("onOpen");
+      SendWsMessage("create or join", new JsonMessageData{ room = roomName });
+    }
+    void onMessage(string msg)
+    {
+      Debug.Log("onMessage");
+      HandleMessage(msg);
+    }
+    ws = new WebsocketClient(onOpen, onMessage);
     ws.Connect();
-    SendWsMessage("create or join", new { room = roomName });
-
-    /*
-    Debug.Log("GetSelectedSdpSemantics");
-    var configuration = GetSelectedSdpSemantics();
-    _pc1 = new RTCPeerConnection(ref configuration);
-    Debug.Log("Created local peer connection object pc1");
-    _pc1.OnIceCandidate = pc1OnIceCandidate;
-    _pc1.OnIceConnectionChange = pc1OnIceConnectionChange;
-    _pc1.OnNegotiationNeeded = pc1OnNegotiationNeeded;
-    // _pc2 = new RTCPeerConnection(ref configuration);
-    // Debug.Log("Created remote peer connection object pc2");
-    // _pc2.OnIceCandidate = pc2OnIceCandidate;
-    // _pc2.OnIceConnectionChange = pc2OnIceConnectionChange;
-    // _pc2.OnTrack = pc2Ontrack;
-
-    // RTCDataChannelInit conf = new RTCDataChannelInit(true);
-    // _pc1.CreateDataChannel("data", ref conf);
-    audioStream = Audio.CaptureStream();
-    videoStream = cam.CaptureStream(1280, 720, 1000000);
-    RtImage.texture = cam.targetTexture;
-    */
   }
-
+  
   private void OnIceCandidate(RTCIceCandidate​ rtcCandidate)
   {
     // GetOtherPc(pc).AddIceCandidate(ref candidate);
     Debug.Log($"Local ICE candidate:\n {rtcCandidate.candidate}");
-    SendWsMessage("candidate", new {
+    SendWsMessage("candidate", new JsonMessageData{
       room = roomName,
       label = rtcCandidate.sdpMLineIndex,
       id = rtcCandidate.sdpMid,
-      rtcCandidate.candidate
+      candidate = rtcCandidate.candidate
     });
   }
 
+  /*
   private void OnTrack(RTCPeerConnection pc, RTCTrackEvent e)
   {
     pc2Senders.Add(pc.AddTrack(e.Track, videoStream));
@@ -326,16 +474,7 @@ public class MediaStreamSample : MonoBehaviour
     trackInfos.Append($"Track id: {e.Track.Id}\r\n");
     infoText.text = trackInfos.ToString();
   }
-
-  private string GetName(RTCPeerConnection pc)
-  {
-    return (pc == peerConnection) ? "pc1" : "pc2";
-  }
-
-  private RTCPeerConnection GetOtherPc(RTCPeerConnection pc)
-  {
-    return (pc == peerConnection) ? _pc2 : peerConnection;
-  }
+  */
 
   private IEnumerator OnCreateOfferSuccess(RTCSessionDescription desc)
   {
@@ -346,44 +485,12 @@ public class MediaStreamSample : MonoBehaviour
 
     if (!op.IsError)
     {
-      OnSetLocalSuccess(peerConnection);
+      OnSetLocalSuccess(desc, true);
     }
     else
     {
       var error = op.Error;
       OnSetSessionDescriptionError(ref error);
-    }
-
-  }
-
-  private void foo()
-  {
-    Debug.Log("pc2 setRemoteDescription start");
-    var op2 = _pc2.SetRemoteDescription(ref desc);
-    yield return op2;
-    if (!op2.IsError)
-    {
-      OnSetRemoteSuccess(_pc2);
-    }
-    else
-    {
-      var error = op2.Error;
-      OnSetSessionDescriptionError(ref error);
-    }
-    Debug.Log("pc2 createAnswer start");
-    // Since the 'remote' side has no media stream we need
-    // to pass in the right constraints in order for it to
-    // accept the incoming offer of audio and video.
-
-    var op3 = _pc2.CreateAnswer(ref _answerOptions);
-    yield return op3;
-    if (!op3.IsError)
-    {
-      yield return OnCreateAnswerSuccess(op3.Desc);
-    }
-    else
-    {
-      OnCreateSessionDescriptionError(op3.Error);
     }
   }
 
@@ -392,9 +499,11 @@ public class MediaStreamSample : MonoBehaviour
     Audio.Update(data, data.Length);
   }
 
-  private void OnSetLocalSuccess(RTCPeerConnection pc)
+  private void OnSetLocalSuccess(RTCSessionDescription desc, bool isOffer)
   {
-    Debug.Log($"{GetName(pc)} SetLocalDescription complete");
+    var cmd = isOffer ? "offer" : "answer";
+    Debug.Log("SetLocalDescription complete");
+    SendWsMessage(cmd, new JsonMessageData{ sdp = desc.sdp, room = roomName });
   }
 
   static void OnSetSessionDescriptionError(ref RTCError error)
@@ -402,39 +511,25 @@ public class MediaStreamSample : MonoBehaviour
     Debug.LogError($"Error Detail Type: {error.message}");
   }
 
-  private void OnSetRemoteSuccess(RTCPeerConnection pc)
+  private void OnSetRemoteSuccess(string sdp)
   {
-    Debug.Log($"{GetName(pc)} SetRemoteDescription complete");
+    Debug.Log("SetRemoteDescription complete");
   }
 
   IEnumerator OnCreateAnswerSuccess(RTCSessionDescription desc)
   {
-    Debug.Log($"Answer from pc2:\n{desc.sdp}");
-    Debug.Log("pc2 setLocalDescription start");
-    var op = _pc2.SetLocalDescription(ref desc);
+    Debug.Log($"Answer created:\n{desc.sdp}");
+    Debug.Log("setLocalDescription start");
+    var op = peerConnection.SetLocalDescription(ref desc);
     yield return op;
 
     if (!op.IsError)
     {
-      OnSetLocalSuccess(_pc2);
+      OnSetLocalSuccess(desc, false);
     }
     else
     {
       var error = op.Error;
-      OnSetSessionDescriptionError(ref error);
-    }
-
-    Debug.Log("pc1 setRemoteDescription start");
-
-    var op2 = peerConnection.SetRemoteDescription(ref desc);
-    yield return op2;
-    if (!op2.IsError)
-    {
-      OnSetRemoteSuccess(peerConnection);
-    }
-    else
-    {
-      var error = op2.Error;
       OnSetSessionDescriptionError(ref error);
     }
   }
@@ -443,4 +538,18 @@ public class MediaStreamSample : MonoBehaviour
   {
     Debug.LogError($"Error Detail Type: {error.message}");
   }
+
+  private void OnApplicationQuit()
+  {
+    ws?.Close();
+  }
+
+  void Update()
+  {
+    #if !UNITY_WEBGL || UNITY_EDITOR
+      ws?.Dispatch();
+    #endif
+  }
+
+
 }

@@ -1044,6 +1044,7 @@ MonoBehaviour:
   removeTracksButton: {fileID: 510738292}
   cam: {fileID: 934963288}
   infoText: {fileID: 440341638}
+  roomNameText: {fileID: 1646972717}
   RtImage: {fileID: 1839397354}
 --- !u!1 &1068560632
 GameObject:

@@ -4,17 +4,18 @@ using UnityEngine;
 
 public class WebsocketClient
 {
-  WebSocket websocket;
+  readonly WebSocket websocket;
   public delegate void WebSocketMessageEventHandler(string message);
 
   // Start is called before the first frame update
-  public WebsocketClient(WebSocketMessageEventHandler onMessage)
+  public WebsocketClient(Action onOpen, Action<string> onMessage)
   {
     websocket = new WebSocket("ws://localhost:5442/ws-test");
 
     websocket.OnOpen += () =>
     {
       Debug.Log("Connection open!");
+      onOpen.Invoke();
     };
 
     websocket.OnError += (e) =>
@@ -31,7 +32,7 @@ public class WebsocketClient
     {
       // Reading a plain text message
       var message = System.Text.Encoding.UTF8.GetString(bytes);
-      Debug.Log("OnMessage! " + message);
+      Debug.Log($"OnMessage\n{message}");
       onMessage.Invoke(message);
     };
 
@@ -45,14 +46,7 @@ public class WebsocketClient
     await websocket.Connect();
   }
 
-  void Update()
-  {
-#if !UNITY_WEBGL || UNITY_EDITOR
-    websocket.DispatchMessageQueue();
-#endif
-  }
-
-  public async void Send(String msg)
+  public async void Send(string msg)
   {
     if (websocket.State == WebSocketState.Open)
     {
@@ -64,8 +58,13 @@ public class WebsocketClient
     }
   }
 
-  private async void OnApplicationQuit()
+  public async void Close()
   {
     await websocket.Close();
+  }
+
+  public void Dispatch()
+  {
+    websocket.DispatchMessageQueue();
   }
 }
