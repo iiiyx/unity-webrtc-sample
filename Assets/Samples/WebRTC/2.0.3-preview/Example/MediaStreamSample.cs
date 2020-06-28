@@ -22,11 +22,6 @@ public class MediaStreamSample : MonoBehaviour
   private RTCPeerConnection peerConnection;
   private List<RTCRtpSender> pc1Senders;
   private MediaStream audioStream, videoStream;
-  private RTCDataChannel remoteDataChannel;
-  private Coroutine sdpCheck;
-  private string msg;
-  private DelegateOnTrack pc2Ontrack;
-  private DelegateOnNegotiationNeeded onNegotiationNeeded;
   private StringBuilder trackInfos;
   private bool videoUpdateStarted;
   private bool isCaller;
@@ -66,7 +61,6 @@ public class MediaStreamSample : MonoBehaviour
     callButton.interactable = true;
 
     // pc2Ontrack = e => { OnTrack(_pc2, e); };
-    // onNegotiationNeeded = () => { StartCoroutine(PcOnNegotiationNeeded()); };
     infoText.text = !WebRTC.SupportHardwareEncoder ? "Current GPU doesn't support encoder" : "Current GPU supports encoder";
   }
 
@@ -139,6 +133,7 @@ public class MediaStreamSample : MonoBehaviour
 
     if (!op.IsError)
     {
+      OnSetRemoteSuccess();
       yield return StartCoroutine(CreateAnswer());
     }
     else
@@ -174,11 +169,13 @@ public class MediaStreamSample : MonoBehaviour
     {
       pc1Senders.Add(peerConnection.AddTrack(track, videoStream));
     }
+    /*
     if (!videoUpdateStarted)
     {
       StartCoroutine(WebRTC.Update());
       videoUpdateStarted = true;
     }
+    */
   }
 
   private void RemoveTracks()
@@ -207,7 +204,7 @@ public class MediaStreamSample : MonoBehaviour
   {
     public string room;
     public string sdp;
-    public int? label = null;
+    public int label;
     public string id;
     public string candidate;
   }
@@ -307,7 +304,7 @@ public class MediaStreamSample : MonoBehaviour
     Debug.Log("Created local peer connection");
     peerConnection.OnIceCandidate = OnIceCandidate;
     peerConnection.OnIceConnectionChange = OnIceConnectionChange;
-    // peerConnection.OnNegotiationNeeded = onNegotiationNeeded;
+    peerConnection.OnTrack = e => OnTrack(e);
     AddTracks();
     StartCoroutine(CreateOffer());
   }
@@ -334,7 +331,6 @@ public class MediaStreamSample : MonoBehaviour
     Debug.Log("Created local peer connection");
     peerConnection.OnIceCandidate = OnIceCandidate;
     peerConnection.OnIceConnectionChange = OnIceConnectionChange;
-    // peerConnection.OnNegotiationNeeded = onNegotiationNeeded;
     AddTracks();
     StartCoroutine(HandleOffer(sdp));
   }
@@ -389,7 +385,7 @@ public class MediaStreamSample : MonoBehaviour
 
     if (!op.IsError)
     {
-      Debug.Log("SetRemoteDescription complete");
+      OnSetRemoteSuccess();
     }
     else
     {
@@ -440,17 +436,14 @@ public class MediaStreamSample : MonoBehaviour
       candidate = rtcCandidate.candidate
     });
   }
-
-  /*
-  private void OnTrack(RTCPeerConnection pc, RTCTrackEvent e)
+  private void OnTrack(RTCTrackEvent e)
   {
-    pc2Senders.Add(pc.AddTrack(e.Track, videoStream));
-    trackInfos.Append($"{GetName(pc)} receives remote track:\r\n");
+    // pc2Senders.Add(pc.AddTrack(e.Track, videoStream));
+    trackInfos.Append($"received remote track:\r\n");
     trackInfos.Append($"Track kind: {e.Track.Kind}\r\n");
     trackInfos.Append($"Track id: {e.Track.Id}\r\n");
     infoText.text = trackInfos.ToString();
   }
-  */
 
   private IEnumerator OnCreateOfferSuccess(RTCSessionDescription desc)
   {
@@ -488,7 +481,7 @@ public class MediaStreamSample : MonoBehaviour
     Debug.LogError($"Error Detail Type: {error.message}");
   }
 
-  private void OnSetRemoteSuccess(string sdp)
+  private void OnSetRemoteSuccess()
   {
     Debug.Log("SetRemoteDescription complete");
   }
