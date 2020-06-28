@@ -169,13 +169,11 @@ public class MediaStreamSample : MonoBehaviour
     {
       pc1Senders.Add(peerConnection.AddTrack(track, videoStream));
     }
-    /*
     if (!videoUpdateStarted)
     {
       StartCoroutine(WebRTC.Update());
       videoUpdateStarted = true;
     }
-    */
   }
 
   private void RemoveTracks()
@@ -305,8 +303,8 @@ public class MediaStreamSample : MonoBehaviour
     peerConnection.OnIceCandidate = OnIceCandidate;
     peerConnection.OnIceConnectionChange = OnIceConnectionChange;
     peerConnection.OnTrack = e => OnTrack(e);
+    peerConnection.OnNegotiationNeeded = () => StartCoroutine(CreateOffer());
     AddTracks();
-    StartCoroutine(CreateOffer());
   }
 
   private void HandleOffer(string room, string sdp)
@@ -331,8 +329,8 @@ public class MediaStreamSample : MonoBehaviour
     Debug.Log("Created local peer connection");
     peerConnection.OnIceCandidate = OnIceCandidate;
     peerConnection.OnIceConnectionChange = OnIceConnectionChange;
+    peerConnection.OnNegotiationNeeded = () => StartCoroutine(HandleOffer(sdp));
     AddTracks();
-    StartCoroutine(HandleOffer(sdp));
   }
 
   private void HandleAnswer(string room, string sdp)
