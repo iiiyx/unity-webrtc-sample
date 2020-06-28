@@ -195,39 +195,14 @@ public class MediaStreamSample : MonoBehaviour
     infoText.text = "";
   }
 
+  [Serializable]
   public class JsonMessage
   {
     public string command;
     public JsonMessageData data;
-    public string ToJson()
-    {
-      StringBuilder sb = new StringBuilder($"{{\"command\":\"{command}\",\"data\":{{");
-      if (data.room != null)
-      {
-        sb.Append($"\"room\":\"{data.room}\",");
-      }
-      if (data.sdp != null)
-      {
-        sb.Append($"\"sdp\":\"{data.sdp}\",");
-      }
-      if (data.label != null)
-      {
-        sb.Append($"\"label\":{data.label},");
-      }
-      if (data.id != null)
-      {
-        sb.Append($"\"id\":\"{data.id}\",");
-      }
-      if (data.candidate != null)
-      {
-        sb.Append($"\"candidate\":\"{data.candidate}\",");
-      }
-      sb.Remove(sb.Length - 1, 1);
-      sb.Append("}}");
-      return sb.ToString();
-    }
   }
 
+  [Serializable]
   public class JsonMessageData
   {
     public string room;
@@ -426,7 +401,8 @@ public class MediaStreamSample : MonoBehaviour
   private void SendWsMessage(string cmd, JsonMessageData data)
   {
     var msg = new JsonMessage{ command = cmd, data = data };
-    ws.Send(msg.ToJson());
+    var msgStr = JsonUtility.ToJson(msg);
+    ws.Send(msgStr);
   }
 
   private void Call()
@@ -478,6 +454,7 @@ public class MediaStreamSample : MonoBehaviour
 
   private IEnumerator OnCreateOfferSuccess(RTCSessionDescription desc)
   {
+    Debug.Log("OnCreateOfferSuccess");
     Debug.Log($"Offer from pc\n{desc.sdp}");
     Debug.Log("pc setLocalDescription start");
     var op = peerConnection.SetLocalDescription(ref desc);

@@ -33,6 +33,10 @@ public class WebsocketClient
       // Reading a plain text message
       var message = System.Text.Encoding.UTF8.GetString(bytes);
       Debug.Log($"OnMessage\n{message}");
+      if (message.Equals("ping"))
+      {
+        return;
+      }
       onMessage.Invoke(message);
     };
 
